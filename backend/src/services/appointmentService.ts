@@ -28,7 +28,8 @@ interface ListAppointmentsQuery {
   page?: number;
   limit?: number;
 }
-
+export const isValidTime = (time: string): boolean =>
+  /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
 export class AppointmentService {
   async createAppointment(data: CreateAppointmentData) {
     // Check if branch exists and is active
@@ -59,15 +60,34 @@ export class AppointmentService {
     if (conflictingAppointment) {
       throw new AppError(409, 'This time slot is already booked');
     }
+// Validate time format
+if (
+  !isValidTime(data.appointmentTime) ||
+  !isValidTime(branch.openingTime) ||
+  !isValidTime(branch.closingTime)
+) {
+  throw new AppError(400, 'Invalid time format');
+}
 
-    // Validate time is within branch hours
-    const [appointmentHour] = data.appointmentTime.split(':').map(Number);
-    const [openingHour] = branch.openingTime.split(':').map(Number);
-    const [closingHour] = branch.closingTime.split(':').map(Number);
+// Validate time is within branch hours
+const toMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+};
 
-    if (appointmentHour < openingHour || appointmentHour >= closingHour) {
-      throw new AppError(400, `Appointments must be between ${branch.openingTime} and ${branch.closingTime}`);
-    }
+const appointmentMinutes = toMinutes(data.appointmentTime);
+const openingMinutes = toMinutes(branch.openingTime);
+const closingMinutes = toMinutes(branch.closingTime);
+
+if (
+  appointmentMinutes < openingMinutes ||
+  appointmentMinutes >= closingMinutes
+) {
+  throw new AppError(
+    400,
+    `Appointments must be between ${branch.openingTime} and ${branch.closingTime}`
+  );
+}
 
     const appointment = await prisma.appointment.create({
       data: {
