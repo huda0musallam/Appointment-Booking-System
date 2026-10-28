@@ -1,4 +1,5 @@
 import { AppError } from '../middleware/errorHandler';
+import { isValidTime } from '../services/appointmentService';
 
 describe('AppError', () => {
   it('should create an AppError with correct properties', () => {
@@ -14,4 +15,19 @@ describe('AppError', () => {
     
     expect(error.isOperational).toBe(false);
   });
+});
+describe('isValidTime', () => {
+  it.each(['09:00', '12:30', '16:59', '00:00', '23:59'])(
+    'accepts valid time %s',
+    (time) => {
+      expect(isValidTime(time)).toBe(true);
+    }
+  );
+
+  it.each(['16:90', '25:00', 'abc', '9:00', '12:60', ''])(
+    'rejects invalid time %s',
+    (time) => {
+      expect(isValidTime(time)).toBe(false);
+    }
+  );
 });
