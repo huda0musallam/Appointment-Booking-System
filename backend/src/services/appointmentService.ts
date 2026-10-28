@@ -1,7 +1,11 @@
+
 import { prisma } from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { AppointmentStatus } from '@prisma/client';
+
+export const isValidTime = (time: string): boolean =>
+  /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
 
 interface CreateAppointmentData {
   customerName: string;
@@ -29,6 +33,11 @@ interface ListAppointmentsQuery {
   limit?: number;
 }
 
+const toMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
 export class AppointmentService {
   async createAppointment(data: CreateAppointmentData) {
     // Check if branch exists and is active
@@ -42,6 +51,31 @@ export class AppointmentService {
 
     if (!branch.isActive) {
       throw new AppError(400, 'Branch is not accepting appointments');
+    }
+
+    // Validate time format
+    if (
+      !isValidTime(data.appointmentTime) ||
+      !isValidTime(branch.openingTime) ||
+      !isValidTime(branch.closingTime)
+    ) {
+      throw new AppError(400, 'Invalid time format');
+    }
+
+    // Validate branch hours
+    const appointmentMinutes = toMinutes(data.appointmentTime);
+    const openingMinutes = toMinutes(branch.openingTime);
+    const closingMinutes = toMinutes(branch.closingTime);
+
+    if (
+      openingMinutes >= closingMinutes ||
+      appointmentMinutes < openingMinutes ||
+      appointmentMinutes >= closingMinutes
+    ) {
+      throw new AppError(
+        400,
+        `Appointments must be between ${branch.openingTime} and ${branch.closingTime}`
+      );
     }
 
     // Check for conflicting appointments
@@ -60,38 +94,6 @@ export class AppointmentService {
       throw new AppError(409, 'This time slot is already booked');
     }
 
-    // Validate time is within branch hours
-   
-    const isValidTime = (time: string): boolean =>
-  /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
-
-if (
-  !isValidTime(data.appointmentTime) ||
-  !isValidTime(branch.openingTime) ||
-  !isValidTime(branch.closingTime)
-) {
-  throw new AppError(400, 'Invalid time format');
-}
-
-const toMinutes = (time: string): number => {
-  const [hours, minutes] = time.split(':').map(Number);
-  return hours * 60 + minutes;
-};
-
-const appointmentMinutes = toMinutes(data.appointmentTime);
-const openingMinutes = toMinutes(branch.openingTime);
-const closingMinutes = toMinutes(branch.closingTime);
-
-if (
-  appointmentMinutes < openingMinutes ||
-  appointmentMinutes >= closingMinutes
-) {
-  throw new AppError(
-    400,
-    `Appointments must be between ${branch.openingTime} and ${branch.closingTime}`
-  );
-}
-
     const appointment = await prisma.appointment.create({
       data: {
         ...data,
@@ -103,7 +105,7 @@ if (
       }
     });
 
-    // Simulate sending confirmation (in production, this would send an email)
+    // Simulate sending confirmation
     logger.info(`Appointment confirmation sent to ${data.customerEmail}`, {
       appointmentId: appointment.id
     });
@@ -147,8 +149,7 @@ if (
     }
 
     if (query.date) {
-      const date = new Date(query.date);
-      where.appointmentDate = date;
+      where.appointmentDate = new Date(query.date);
     }
 
     const [appointments, total] = await Promise.all([
@@ -186,10 +187,11 @@ if (
       const conflictingAppointment = await prisma.appointment.findFirst({
         where: {
           branchId: existingAppointment.branchId,
-          appointmentDate: data.appointmentDate 
-            ? new Date(data.appointmentDate) 
+          appointmentDate: data.appointmentDate
+            ? new Date(data.appointmentDate)
             : existingAppointment.appointmentDate,
-          appointmentTime: data.appointmentTime || existingAppointment.appointmentTime,
+          appointmentTime:
+            data.appointmentTime || existingAppointment.appointmentTime,
           status: {
             in: ['PENDING', 'CONFIRMED']
           },
@@ -205,6 +207,7 @@ if (
     }
 
     const updateData: any = { ...data };
+
     if (data.appointmentDate) {
       updateData.appointmentDate = new Date(data.appointmentDate);
     }
@@ -221,7 +224,7 @@ if (
   }
 
   async deleteAppointment(id: string) {
-    await this.getAppointment(id); // Check if exists
+    await this.getAppointment(id);
 
     await prisma.appointment.delete({
       where: { id }
@@ -252,12 +255,22 @@ if (
     });
 
     const bookedTimes = bookedAppointments.map(a => a.appointmentTime);
-    const [openingHour] = branch.openingTime.split(':').map(Number);
-    const [closingHour] = branch.closingTime.split(':').map(Number);
+    const openingMinutes = toMinutes(branch.openingTime);
+    const closingMinutes = toMinutes(branch.closingTime);
 
     const availableSlots: string[] = [];
-    for (let hour = openingHour; hour < closingHour; hour++) {
-      const timeSlot = `${hour.toString().padStart(2, '0')}:00`;
+
+    for (
+      let minutes = openingMinutes;
+      minutes < closingMinutes;
+      minutes += 60
+    ) {
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      const timeSlot = `${hour.toString().padStart(2, '0')}:${minute
+        .toString()
+        .padStart(2, '0')}`;
+
       if (!bookedTimes.includes(timeSlot)) {
         availableSlots.push(timeSlot);
       }
